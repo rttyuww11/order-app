@@ -1,4 +1,10 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import Admin from './Admin.jsx'
+import {
+  ADMIN_STORAGE_KEY,
+  readAdminData,
+  writeAdminData,
+} from './adminData.js'
 import './App.css'
 
 const menuItems = [
@@ -38,19 +44,74 @@ const menuItems = [
 ]
 
 const formatPrice = (price) => `${price.toLocaleString('ko-KR')}원`
+const inventoryLoadError =
+  '재고 정보를 확인할 수 없어 메뉴를 담을 수 없어요. 관리자 화면에서 재고를 확인해 주세요.'
+
+function loadInventory() {
+  try {
+    return { inventory: readAdminData().inventory, error: null }
+  } catch {
+    return { inventory: [], error: inventoryLoadError }
+  }
+}
+
+function getMenuQuantity(items, menuId) {
+  return items
+    .filter((item) => item.menuId === menuId)
+    .reduce((quantity, item) => quantity + item.quantity, 0)
+}
+
+function createAcceptedOrder(items, totalPrice) {
+  return {
+    id: `order-${crypto.randomUUID()}`,
+    createdAt: new Date().toISOString(),
+    status: 'received',
+    items,
+    totalPrice,
+  }
+}
 
 function App() {
   const [selectedOptions, setSelectedOptions] = useState({})
   const [cart, setCart] = useState([])
   const [submitting, setSubmitting] = useState(false)
   const [notice, setNotice] = useState(null)
+  const [inventoryState, setInventoryState] = useState(loadInventory)
   const submittingRef = useRef(false)
+  const cartRef = useRef([])
+  const { inventory, error: inventoryError } = inventoryState
 
   const cartCount = cart.reduce((count, item) => count + item.quantity, 0)
   const totalPrice = cart.reduce(
     (total, item) => total + item.unitPrice * item.quantity,
     0,
   )
+  const cartExceedsInventory = cart.some((item) => {
+    const stock = inventory.find((menu) => menu.id === item.menuId)?.quantity
+    const menuQuantity = getMenuQuantity(cart, item.menuId)
+
+    return stock === undefined || menuQuantity > stock
+  })
+
+  useEffect(() => {
+    function syncInventory(event) {
+      if (event.key !== ADMIN_STORAGE_KEY && event.key !== null) return
+
+      const nextInventory = loadInventory()
+      setInventoryState(nextInventory)
+      if (nextInventory.error) {
+        setNotice({ type: 'error', message: nextInventory.error })
+      }
+    }
+
+    window.addEventListener('storage', syncInventory)
+    return () => window.removeEventListener('storage', syncInventory)
+  }, [])
+
+  function replaceCart(nextCart) {
+    cartRef.current = nextCart
+    setCart(nextCart)
+  }
 
   function toggleOption(menuId, optionId) {
     setSelectedOptions((current) => {
@@ -67,6 +128,40 @@ function App() {
   }
 
   function addToCart(menu) {
+    let latestData
+    try {
+      latestData = readAdminData()
+      setInventoryState({ inventory: latestData.inventory, error: null })
+    } catch {
+      setInventoryState({ inventory: [], error: inventoryLoadError })
+      setNotice({ type: 'error', message: inventoryLoadError })
+      return
+    }
+
+    const stock = latestData.inventory.find(
+      (inventoryItem) => inventoryItem.id === menu.id,
+    )?.quantity
+    const currentMenuQuantity = getMenuQuantity(cartRef.current, menu.id)
+
+    if (stock === undefined) {
+      setNotice({
+        type: 'error',
+        message: `${menu.name} 메뉴의 재고 정보를 찾을 수 없어요.`,
+      })
+      return
+    }
+
+    if (currentMenuQuantity >= stock) {
+      setNotice({
+        type: 'error',
+        message:
+          stock === 0
+            ? `${menu.name} 메뉴가 품절되었어요.`
+            : `${menu.name} 메뉴의 재고 한도(${stock}개)에 도달했어요.`,
+      })
+      return
+    }
+
     const options = menu.options.filter((option) =>
       (selectedOptions[menu.id] ?? []).includes(option.id),
     )
@@ -78,35 +173,65 @@ function App() {
     const unitPrice =
       menu.price + options.reduce((total, option) => total + option.price, 0)
 
-    setCart((current) => {
-      const existingItem = current.find((item) => item.id === cartItemId)
-
-      if (existingItem) {
-        return current.map((item) =>
+    const currentCart = cartRef.current
+    const existingItem = currentCart.find((item) => item.id === cartItemId)
+    const nextCart = existingItem
+      ? currentCart.map((item) =>
           item.id === cartItemId
             ? { ...item, quantity: item.quantity + 1 }
             : item,
         )
-      }
+      : [
+          ...currentCart,
+          {
+            id: cartItemId,
+            menuId: menu.id,
+            name: menu.name,
+            options,
+            quantity: 1,
+            unitPrice,
+          },
+        ]
 
-      return [
-        ...current,
-        {
-          id: cartItemId,
-          menuId: menu.id,
-          name: menu.name,
-          options,
-          quantity: 1,
-          unitPrice,
-        },
-      ]
-    })
+    replaceCart(nextCart)
     setNotice({ type: 'success', message: `${menu.name} 메뉴를 담았어요.` })
   }
 
   function changeQuantity(itemId, change) {
-    setCart((current) =>
-      current
+    const currentCart = cartRef.current
+    const targetItem = currentCart.find((item) => item.id === itemId)
+    if (!targetItem) return
+
+    if (change > 0) {
+      let latestInventory
+      try {
+        latestInventory = readAdminData().inventory
+        setInventoryState({ inventory: latestInventory, error: null })
+      } catch {
+        setInventoryState({ inventory: [], error: inventoryLoadError })
+        setNotice({ type: 'error', message: inventoryLoadError })
+        return
+      }
+
+      const stock = latestInventory.find(
+        (menu) => menu.id === targetItem.menuId,
+      )?.quantity
+      const currentMenuQuantity = getMenuQuantity(
+        currentCart,
+        targetItem.menuId,
+      )
+
+      if (stock === undefined || currentMenuQuantity >= stock) {
+        setNotice({
+          type: 'error',
+          message: `${targetItem.name} 메뉴의 재고 한도에 도달했어요.`,
+        })
+        return
+      }
+    }
+
+    replaceCart(
+      currentCart
         .map((item) =>
           item.id === itemId
             ? { ...item, quantity: item.quantity + change }
@@ -116,51 +241,83 @@ function App() {
     )
   }
 
-  async function submitOrder() {
-    if (cart.length === 0 || submittingRef.current) return
+  function submitOrder() {
+    const currentCart = cartRef.current
+    if (currentCart.length === 0 || submittingRef.current) return
 
     submittingRef.current = true
     setSubmitting(true)
     setNotice({ type: 'info', message: '주문을 접수하고 있어요.' })
 
     try {
-      const response = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          items: cart.map((item) => ({
-            menuId: item.menuId,
-            name: item.name,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            options: item.options.map(({ id, name, price }) => ({
-              id,
-              name,
-              price,
-            })),
-          })),
-          totalPrice,
-        }),
+      const adminData = readAdminData()
+      const unavailableItem = currentCart.find((item) => {
+        const stock = adminData.inventory.find(
+          (inventoryItem) => inventoryItem.id === item.menuId,
+        )?.quantity
+
+        return (
+          stock === undefined ||
+          getMenuQuantity(currentCart, item.menuId) > stock
+        )
       })
 
-      if (!response.ok) {
-        throw new Error(`주문 접수에 실패했어요. (${response.status})`)
+      if (unavailableItem) {
+        setInventoryState({ inventory: adminData.inventory, error: null })
+        setNotice({
+          type: 'error',
+          message: `${unavailableItem.name} 메뉴의 재고가 변경되었어요. 수량을 확인해 주세요.`,
+        })
+        return
       }
 
-      setCart([])
-      setNotice({ type: 'success', message: '주문이 접수되었어요. 감사합니다!' })
-    } catch (error) {
+      const orderItems = currentCart.map((item) => ({
+        menuId: item.menuId,
+        name: item.name,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        options: item.options.map(({ id, name, price }) => ({
+          id,
+          name,
+          price,
+        })),
+      }))
+      const orderTotalPrice = currentCart.reduce(
+        (total, item) => total + item.unitPrice * item.quantity,
+        0,
+      )
+      const nextData = {
+        ...adminData,
+        inventory: adminData.inventory.map((menu) => ({
+          ...menu,
+          quantity: menu.quantity - getMenuQuantity(currentCart, menu.id),
+        })),
+        orders: [
+          createAcceptedOrder(orderItems, orderTotalPrice),
+          ...adminData.orders,
+        ],
+      }
+
+      writeAdminData(nextData)
+      setInventoryState({ inventory: nextData.inventory, error: null })
+      replaceCart([])
+      setNotice({
+        type: 'success',
+        message: '주문이 접수되었어요. 관리자 주문 현황에 등록했습니다.',
+      })
+    } catch {
       setNotice({
         type: 'error',
-        message:
-          error instanceof TypeError
-            ? '주문 서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.'
-            : error.message,
+        message: '주문을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.',
       })
     } finally {
       submittingRef.current = false
       setSubmitting(false)
     }
+  }
+
+  if (window.location.pathname === '/admin') {
+    return <Admin />
   }
 
   return (
@@ -192,65 +349,99 @@ function App() {
             <span className="menu-count">COFFEE MENU</span>
           </div>
 
+          {inventoryError && (
+            <p className="notice notice--error" role="alert">
+              {inventoryError}
+            </p>
+          )}
+
           <div className="menu-grid">
-            {menuItems.map((menu) => (
-              <article className="menu-card" key={menu.id}>
-                <div
-                  className={`menu-card__visual menu-card__visual--${menu.tone}`}
-                  aria-hidden="true"
-                >
-                  <span className="visual-sun" />
-                  <span className="visual-beans visual-beans--one" />
-                  <span className="visual-beans visual-beans--two" />
-                  <span className="coffee-cup">
-                    <span className="coffee-cup__lid" />
-                    <span className="coffee-cup__sleeve">COZY</span>
-                  </span>
-                  <span className="visual-caption">COZY COFFEE</span>
-                </div>
+            {menuItems.map((menu) => {
+              const stockQuantity = inventory.find(
+                (item) => item.id === menu.id,
+              )?.quantity
+              const cartQuantity = getMenuQuantity(cart, menu.id)
+              const atStockLimit =
+                stockQuantity === undefined || cartQuantity >= stockQuantity
 
-                <div className="menu-card__body">
-                  <div className="menu-card__title-row">
-                    <h2>{menu.name}</h2>
-                    <span className="menu-card__price">{formatPrice(menu.price)}</span>
-                  </div>
-                  <p className="menu-card__description">{menu.description}</p>
-
-                  <fieldset className="option-list">
-                    <legend className="sr-only">{menu.name} 옵션 선택</legend>
-                    {menu.options.map((option) => {
-                      const checked = (selectedOptions[menu.id] ?? []).includes(
-                        option.id,
-                      )
-
-                      return (
-                        <label className="option-row" key={option.id}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleOption(menu.id, option.id)}
-                          />
-                          <span>{option.name}</span>
-                          <span className="option-price">
-                            {option.price > 0
-                              ? `+${formatPrice(option.price)}`
-                              : '+0원'}
-                          </span>
-                        </label>
-                      )
-                    })}
-                  </fieldset>
-
-                  <button
-                    className="button button--outline menu-card__add"
-                    type="button"
-                    onClick={() => addToCart(menu)}
+              return (
+                <article className="menu-card" key={menu.id}>
+                  <div
+                    className={`menu-card__visual menu-card__visual--${menu.tone}`}
+                    aria-hidden="true"
                   >
-                    <span aria-hidden="true">+</span> 담기
-                  </button>
-                </div>
-              </article>
-            ))}
+                    <span className="visual-sun" />
+                    <span className="visual-beans visual-beans--one" />
+                    <span className="visual-beans visual-beans--two" />
+                    <span className="coffee-cup">
+                      <span className="coffee-cup__lid" />
+                      <span className="coffee-cup__sleeve">COZY</span>
+                    </span>
+                    <span className="visual-caption">COZY COFFEE</span>
+                  </div>
+
+                  <div className="menu-card__body">
+                    <div className="menu-card__title-row">
+                      <h2>{menu.name}</h2>
+                      <div className="menu-card__price-group">
+                        <span className="menu-card__price">
+                          {formatPrice(menu.price)}
+                        </span>
+                        <span className="menu-card__stock">
+                          {inventoryError
+                            ? '재고 확인 불가'
+                            : `재고 ${stockQuantity ?? '-'}개`}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="menu-card__description">{menu.description}</p>
+
+                    <fieldset className="option-list">
+                      <legend className="sr-only">
+                        {menu.name} 옵션 선택
+                      </legend>
+                      {menu.options.map((option) => {
+                        const checked = (
+                          selectedOptions[menu.id] ?? []
+                        ).includes(option.id)
+
+                        return (
+                          <label className="option-row" key={option.id}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleOption(menu.id, option.id)}
+                            />
+                            <span>{option.name}</span>
+                            <span className="option-price">
+                              {option.price > 0
+                                ? `+${formatPrice(option.price)}`
+                                : '+0원'}
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </fieldset>
+
+                    <button
+                      className="button button--outline menu-card__add"
+                      type="button"
+                      onClick={() => addToCart(menu)}
+                      disabled={Boolean(inventoryError) || atStockLimit}
+                    >
+                      <span aria-hidden="true">+</span>{' '}
+                      {inventoryError
+                        ? '재고 확인'
+                        : stockQuantity === 0
+                          ? '품절'
+                          : atStockLimit
+                            ? '재고 한도 도달'
+                            : '담기'}
+                    </button>
+                  </div>
+                </article>
+              )
+            })}
           </div>
         </section>
 
@@ -320,6 +511,12 @@ function App() {
                         type="button"
                         aria-label={`${item.name} 수량 늘리기`}
                         onClick={() => changeQuantity(item.id, 1)}
+                        disabled={
+                          getMenuQuantity(cart, item.menuId) >=
+                          (inventory.find(
+                            (inventoryItem) => inventoryItem.id === item.menuId,
+                          )?.quantity ?? 0)
+                        }
                       >
                         +
                       </button>
@@ -337,11 +534,22 @@ function App() {
                 <span>총 금액</span>
                 <strong>{formatPrice(totalPrice)}</strong>
               </div>
+              {cartExceedsInventory && (
+                <p className="cart-stock-warning" role="alert">
+                  재고가 변경되어 담긴 수량이 남은 재고보다 많아요. 주문 전에
+                  수량을 줄여 주세요.
+                </p>
+              )}
               <button
                 className="button button--primary cart-summary__submit"
                 type="button"
                 onClick={submitOrder}
-                disabled={cart.length === 0 || submitting}
+                disabled={
+                  cart.length === 0 ||
+                  submitting ||
+                  Boolean(inventoryError) ||
+                  cartExceedsInventory
+                }
               >
                 {submitting ? '접수 중...' : '주문하기'}
                 {!submitting && <span aria-hidden="true">→</span>}
