@@ -1,14 +1,8 @@
 import { useEffect, useState } from 'react'
-import {
-  ADMIN_STORAGE_KEY,
-  readAdminData,
-  writeAdminData,
-} from './adminData.js'
+import { api } from './api.js'
 import './Admin.css'
 
-function formatPrice(price) {
-  return `${price.toLocaleString('ko-KR')}원`
-}
+const formatPrice = (price) => `${price.toLocaleString('ko-KR')}원`
 
 function formatOrderDate(date) {
   return new Intl.DateTimeFormat('ko-KR', {
@@ -24,115 +18,123 @@ function getInventoryStatus(quantity) {
 }
 
 function getOrderStatus(status) {
-  if (status === 'making') return { label: '제조 중', tone: 'making' }
-  if (status === 'completed') return { label: '제조 완료', tone: 'completed' }
+  if (status === 'PREPARING') return { label: '제조 중', tone: 'making' }
+  if (status === 'COMPLETED') return { label: '제조 완료', tone: 'completed' }
   return { label: '주문 접수', tone: 'received' }
 }
 
-function createAdminState() {
-  try {
-    return { data: readAdminData(), error: null }
-  } catch {
-    return {
-      data: null,
-      error: '관리자 데이터를 불러오지 못했어요. 저장 공간을 확인한 뒤 다시 시도해 주세요.',
-    }
+function summarizeOrders(orders) {
+  return {
+    total: orders.length,
+    received: orders.filter((order) => order.status === 'RECEIVED').length,
+    preparing: orders.filter((order) => order.status === 'PREPARING').length,
+    completed: orders.filter((order) => order.status === 'COMPLETED').length,
   }
 }
 
 function Admin() {
-  const [state, setState] = useState(createAdminState)
-  const { data, error } = state
-
-  useEffect(() => {
-    function syncAdminData(event) {
-      if (event.key !== ADMIN_STORAGE_KEY && event.key !== null) return
-
-      try {
-        setState({ data: readAdminData(), error: null })
-      } catch {
-        setState({
-          data: null,
-          error:
-            '관리자 데이터를 불러오지 못했어요. 저장 공간을 확인한 뒤 다시 시도해 주세요.',
-        })
-      }
-    }
-
-    window.addEventListener('storage', syncAdminData)
-    return () => window.removeEventListener('storage', syncAdminData)
-  }, [])
-
-  function saveData(nextData) {
-    try {
-      writeAdminData(nextData)
-      setState({ data: nextData, error: null })
-    } catch {
-      setState((current) => ({
-        ...current,
-        error: '변경 사항을 저장하지 못했어요. 저장 공간을 확인해 주세요.',
-      }))
-    }
-  }
-
-  function changeInventory(menuId, amount) {
-    if (!data) return
-
-    saveData({
-      ...data,
-      inventory: data.inventory.map((menu) =>
-        menu.id === menuId
-          ? { ...menu, quantity: Math.max(0, menu.quantity + amount) }
-          : menu,
-      ),
-    })
-  }
-
-  function advanceOrder(orderId) {
-    if (!data) return
-
-    saveData({
-      ...data,
-      orders: data.orders.map((order) =>
-        order.id === orderId
-          ? {
-              ...order,
-              status: order.status === 'received' ? 'making' : 'completed',
-            }
-          : order,
-      ),
-    })
-  }
+  const [state, setState] = useState({
+    data: null,
+    loading: true,
+    error: null,
+  })
+  const [reloadKey, setReloadKey] = useState(0)
+  const [busyMenuIds, setBusyMenuIds] = useState([])
+  const [busyOrderIds, setBusyOrderIds] = useState([])
+  const [notice, setNotice] = useState(null)
+  const { data, loading, error } = state
 
   function retryLoading() {
-    setState(createAdminState())
+    setState((current) => ({ ...current, loading: true, error: null }))
+    setReloadKey((key) => key + 1)
   }
 
-  const orders = data
-    ? [...data.orders].sort(
-        (first, second) =>
-          new Date(second.createdAt).getTime() -
-          new Date(first.createdAt).getTime(),
-      )
-    : []
+  useEffect(() => {
+    let active = true
+
+    Promise.all([api.getAdminMenus(), api.getAdminOrders()])
+      .then(([menus, orderData]) => {
+        if (active) {
+          setState({
+            data: { menus, orders: orderData.orders, summary: orderData.summary },
+            loading: false,
+            error: null,
+          })
+        }
+      })
+      .catch((loadError) => {
+        if (active) {
+          setState({ data: null, loading: false, error: loadError.message })
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [reloadKey])
+
+  async function changeInventory(menuId, delta) {
+    if (!data || busyMenuIds.includes(menuId)) return
+
+    setBusyMenuIds((ids) => [...ids, menuId])
+    setNotice(null)
+
+    try {
+      const updatedMenu = await api.changeStock(menuId, delta)
+      setState((current) => ({
+        ...current,
+        data: {
+          ...current.data,
+          menus: current.data.menus.map((menu) =>
+            menu.id === updatedMenu.id ? updatedMenu : menu,
+          ),
+        },
+      }))
+      setNotice({ type: 'success', message: '재고를 변경했어요.' })
+    } catch (updateError) {
+      setNotice({ type: 'error', message: updateError.message })
+    } finally {
+      setBusyMenuIds((ids) => ids.filter((id) => id !== menuId))
+    }
+  }
+
+  async function advanceOrder(order) {
+    if (busyOrderIds.includes(order.id)) return
+    const nextStatus =
+      order.status === 'RECEIVED' ? 'PREPARING' : 'COMPLETED'
+
+    setBusyOrderIds((ids) => [...ids, order.id])
+    setNotice(null)
+
+    try {
+      const updatedOrder = await api.changeOrderStatus(order.id, nextStatus)
+      setState((current) => {
+        const orders = current.data.orders.map((currentOrder) =>
+          currentOrder.id === updatedOrder.id ? updatedOrder : currentOrder,
+        )
+        return {
+          ...current,
+          data: {
+            ...current.data,
+            orders,
+            summary: summarizeOrders(orders),
+          },
+        }
+      })
+      setNotice({ type: 'success', message: '주문 상태를 변경했어요.' })
+    } catch (updateError) {
+      setNotice({ type: 'error', message: updateError.message })
+    } finally {
+      setBusyOrderIds((ids) => ids.filter((id) => id !== order.id))
+    }
+  }
+
   const summary = data
     ? [
-        { id: 'total', label: '총 주문', count: data.orders.length },
-        {
-          id: 'received',
-          label: '주문 접수',
-          count: data.orders.filter((order) => order.status === 'received').length,
-        },
-        {
-          id: 'making',
-          label: '제조 중',
-          count: data.orders.filter((order) => order.status === 'making').length,
-        },
-        {
-          id: 'completed',
-          label: '제조 완료',
-          count: data.orders.filter((order) => order.status === 'completed').length,
-        },
+        { id: 'total', label: '총 주문', count: data.summary.total },
+        { id: 'received', label: '주문 접수', count: data.summary.received },
+        { id: 'making', label: '제조 중', count: data.summary.preparing },
+        { id: 'completed', label: '제조 완료', count: data.summary.completed },
       ]
     : []
 
@@ -157,16 +159,20 @@ function Admin() {
       </header>
 
       <main className="admin-main-content">
-        <section className="admin-panel dashboard-panel" aria-labelledby="dashboard-title">
+        <section
+          className="admin-panel dashboard-panel"
+          aria-labelledby="dashboard-title"
+        >
           <div className="admin-section-heading">
             <div>
               <p className="eyebrow">STORE OVERVIEW</p>
               <h1 id="dashboard-title">관리자 대시보드</h1>
             </div>
-            <span className="admin-live-indicator">실시간 현황</span>
+            <span className="admin-live-indicator">주문 현황</span>
           </div>
 
-          {error ? (
+          {loading && <p role="status">관리자 데이터를 불러오는 중이에요.</p>}
+          {error && (
             <div className="admin-error" role="alert">
               <p>{error}</p>
               <button
@@ -177,27 +183,29 @@ function Admin() {
                 다시 시도
               </button>
             </div>
-          ) : (
-            <>
-              <div className="dashboard-grid">
-                {summary.map((item) => (
-                  <article
-                    className={`dashboard-stat dashboard-stat--${item.id}`}
-                    key={item.id}
-                  >
-                    <span className="dashboard-stat__label">{item.label}</span>
-                    <strong className="dashboard-stat__count">
-                      {item.count}
-                      <span>건</span>
-                    </strong>
-                  </article>
-                ))}
-              </div>
-            </>
+          )}
+          {data && (
+            <div className="dashboard-grid">
+              {summary.map((item) => (
+                <article
+                  className={`dashboard-stat dashboard-stat--${item.id}`}
+                  key={item.id}
+                >
+                  <span className="dashboard-stat__label">{item.label}</span>
+                  <strong className="dashboard-stat__count">
+                    {item.count}
+                    <span>건</span>
+                  </strong>
+                </article>
+              ))}
+            </div>
           )}
         </section>
 
-        <section className="admin-panel inventory-panel" aria-labelledby="inventory-title">
+        <section
+          className="admin-panel inventory-panel"
+          aria-labelledby="inventory-title"
+        >
           <div className="admin-section-heading">
             <div>
               <p className="eyebrow">INVENTORY</p>
@@ -206,10 +214,14 @@ function Admin() {
             <span className="admin-section-caption">메뉴별 현재 재고</span>
           </div>
 
-          {data && (
+          {data && data.menus.length === 0 && (
+            <p className="orders-empty">등록된 메뉴가 없습니다.</p>
+          )}
+          {data && data.menus.length > 0 && (
             <div className="inventory-grid">
-              {data.inventory.map((menu) => {
-                const status = getInventoryStatus(menu.quantity)
+              {data.menus.map((menu) => {
+                const status = getInventoryStatus(menu.stockQuantity)
+                const busy = busyMenuIds.includes(menu.id)
 
                 return (
                   <article className="inventory-card" key={menu.id}>
@@ -222,7 +234,9 @@ function Admin() {
                       </span>
                     </div>
                     <p className="inventory-card__quantity">
-                      <strong>{menu.quantity}</strong>
+                      <output className="inventory-card__count">
+                        {menu.stockQuantity}
+                      </output>
                       <span>개</span>
                     </p>
                     <div
@@ -234,17 +248,17 @@ function Admin() {
                         type="button"
                         aria-label={`${menu.name} 재고 줄이기`}
                         onClick={() => changeInventory(menu.id, -1)}
-                        disabled={!data || menu.quantity === 0 || Boolean(error)}
+                        disabled={busy || menu.stockQuantity === 0}
                       >
                         −
                       </button>
-                      <span>재고 조정</span>
+                      <span>{busy ? '저장 중' : '재고 조정'}</span>
                       <button
                         className="inventory-controls__button"
                         type="button"
                         aria-label={`${menu.name} 재고 늘리기`}
                         onClick={() => changeInventory(menu.id, 1)}
-                        disabled={!data || Boolean(error)}
+                        disabled={busy}
                       >
                         +
                       </button>
@@ -256,7 +270,10 @@ function Admin() {
           )}
         </section>
 
-        <section className="admin-panel orders-panel" aria-labelledby="orders-title">
+        <section
+          className="admin-panel orders-panel"
+          aria-labelledby="orders-title"
+        >
           <div className="admin-section-heading">
             <div>
               <p className="eyebrow">ORDER MANAGEMENT</p>
@@ -269,100 +286,102 @@ function Admin() {
             )}
           </div>
 
-          {data && data.orders.length === 0 ? (
+          {data && data.orders.length === 0 && (
             <div className="orders-empty">
               <span aria-hidden="true">☕</span>
               <p>접수된 주문이 없습니다.</p>
               <span>새로운 주문이 들어오면 이곳에 표시됩니다.</span>
             </div>
-          ) : (
-            data && (
-              <ul className="order-list">
-                {orders.map((order) => {
-                  const status = getOrderStatus(order.status)
+          )}
+          {data && data.orders.length > 0 && (
+            <ul className="order-list">
+              {data.orders.map((order) => {
+                const status = getOrderStatus(order.status)
+                const busy = busyOrderIds.includes(order.id)
 
-                  return (
-                    <li className="order-card" key={order.id}>
-                      <div className="order-card__header">
-                        <div className="order-card__meta">
-                          <span className="order-card__number">
-                            주문 #
-                            {order.id.startsWith('order-')
-                              ? order.id.slice(6, 14)
-                              : order.id}
-                          </span>
-                          <time
-                            className="order-card__date"
-                            dateTime={order.createdAt}
-                          >
-                            {formatOrderDate(order.createdAt)}
-                          </time>
-                        </div>
-                        <span
-                          className={`order-status order-status--${status.tone}`}
-                        >
-                          {status.label}
+                return (
+                  <li className="order-card" key={order.id}>
+                    <div className="order-card__header">
+                      <div className="order-card__meta">
+                        <span className="order-card__number">
+                          주문 #{order.id.slice(0, 8)}
                         </span>
+                        <time
+                          className="order-card__date"
+                          dateTime={order.orderedAt}
+                        >
+                          {formatOrderDate(order.orderedAt)}
+                        </time>
                       </div>
+                      <span
+                        className={`order-status order-status--${status.tone}`}
+                      >
+                        {status.label}
+                      </span>
+                    </div>
 
-                      <div className="order-card__body">
-                        <ul className="order-card__items">
-                          {order.items.map((item, index) => (
-                            <li
-                              className="order-line"
-                              key={`${order.id}-${item.id}-${index}`}
-                            >
-                              <div className="order-line__details">
-                                <span className="order-line__name">
-                                  {item.name} <span>× {item.quantity}</span>
-                                </span>
-                                {item.options?.length > 0 && (
-                                  <span className="order-line__options">
-                                    {item.options
-                                      .map((option) => option.name)
-                                      .join(' · ')}
-                                  </span>
-                                )}
-                              </div>
-                              <span className="order-line__price">
-                                {formatPrice(item.unitPrice * item.quantity)}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-
-                        {order.status !== 'completed' && (
-                          <button
-                            className="button button--primary order-action"
-                            type="button"
-                            onClick={() => advanceOrder(order.id)}
-                            disabled={Boolean(error)}
+                    <div className="order-card__body">
+                      <ul className="order-card__items">
+                        {order.items.map((item) => (
+                          <li
+                            className="order-line"
+                            key={item.id}
                           >
-                            {order.status === 'received'
+                            <div className="order-line__details">
+                              <span className="order-line__name">
+                                {item.name} <span>× {item.quantity}</span>
+                              </span>
+                              {item.options.length > 0 && (
+                                <span className="order-line__options">
+                                  {item.options
+                                    .map((option) => option.name)
+                                    .join(' · ')}
+                                </span>
+                              )}
+                            </div>
+                            <span className="order-line__price">
+                              {formatPrice(item.itemAmount)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+
+                      {order.status !== 'COMPLETED' && (
+                        <button
+                          className="button button--primary order-action"
+                          type="button"
+                          onClick={() => advanceOrder(order)}
+                          disabled={busy}
+                        >
+                          {busy
+                            ? '변경 중...'
+                            : order.status === 'RECEIVED'
                               ? '제조 시작'
                               : '제조 완료'}
-                          </button>
-                        )}
-                      </div>
+                        </button>
+                      )}
+                    </div>
 
-                      <div className="order-card__footer">
-                        <span>주문 금액</span>
-                        <strong>{formatPrice(order.totalPrice)}</strong>
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
-            )
+                    <div className="order-card__footer">
+                      <span>주문 금액</span>
+                      <strong>{formatPrice(order.totalAmount)}</strong>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
           )}
         </section>
-      </main>
 
-      {error && data && (
-        <p className="admin-save-error" role="alert">
-          {error}
-        </p>
-      )}
+        {notice && (
+          <p
+            className={`notice notice--${notice.type}`}
+            role={notice.type === 'error' ? 'alert' : 'status'}
+          >
+            {notice.message}
+          </p>
+        )}
+      </main>
 
       <footer className="site-footer">
         <span>COZY COFFEE</span>

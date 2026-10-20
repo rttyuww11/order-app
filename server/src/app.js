@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import cors from 'cors';
 import express from 'express';
+import api from './api.js';
 import { checkDatabaseConnection } from './database.js';
 
 const app = express();
@@ -37,6 +38,8 @@ app.get('/api/health', async (_request, response, next) => {
   }
 });
 
+app.use('/api', api);
+
 app.use((_request, response) => {
   response.status(404).json({
     error: {
@@ -49,7 +52,9 @@ app.use((_request, response) => {
 app.use((error, _request, response, _next) => {
   const status = Number.isInteger(error.status) && error.status >= 400 && error.status < 600
     ? error.status
-    : 500;
+    : error.type === 'entity.parse.failed'
+      ? 400
+      : 500;
 
   if (status >= 500) {
     console.error(error);
@@ -57,14 +62,21 @@ app.use((error, _request, response, _next) => {
 
   response.status(status).json({
     error: {
-      code: status === 403
-        ? 'FORBIDDEN'
-        : status === 400
-          ? 'BAD_REQUEST'
-          : status === 503
-            ? 'SERVICE_UNAVAILABLE'
-            : 'INTERNAL_SERVER_ERROR',
-      message: status >= 500 ? '서버 내부 오류가 발생했습니다.' : error.message,
+      code: error.code ?? (
+        status === 403
+          ? 'FORBIDDEN'
+          : status === 400
+            ? 'BAD_REQUEST'
+            : status === 503
+              ? 'SERVICE_UNAVAILABLE'
+              : 'INTERNAL_SERVER_ERROR'
+      ),
+      message:
+        status >= 500
+          ? '서버 내부 오류가 발생했습니다.'
+          : error.type === 'entity.parse.failed'
+            ? 'JSON 요청 형식이 올바르지 않습니다.'
+            : error.message,
     },
   });
 });

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import app from './app.js';
-import { checkDatabaseConnection, pool } from './database.js';
+import { checkDatabaseConnection, initializeDatabase, pool } from './database.js';
 
 const port = Number(process.env.PORT ?? 3000);
 
@@ -10,6 +10,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 try {
   await checkDatabaseConnection();
+  await initializeDatabase();
   console.log('Connected to PostgreSQL.');
 } catch (error) {
   console.error('Failed to connect to PostgreSQL:', error.code ?? error.message);

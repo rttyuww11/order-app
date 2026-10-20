@@ -182,9 +182,12 @@
   font-size: 0.82rem;
 }
 
-.inventory-card__quantity strong {
+.inventory-card__count {
+  display: inline-block;
   color: var(--ink);
+  font-family: inherit;
   font-size: 1.55rem;
+  font-weight: 750;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.05em;
   line-height: 1;
@@ -376,7 +379,30 @@
   min-height: 38px;
   flex: 0 0 auto;
   padding: 0 15px;
+  border: 1px solid var(--blue);
+  border-radius: 8px;
+  color: #fff;
+  background: var(--blue);
+  box-shadow: 0 4px 10px rgb(37 99 200 / 18%);
+  cursor: pointer;
+  font: inherit;
   font-size: 0.78rem;
+  font-weight: 700;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.order-action:hover:not(:disabled) {
+  border-color: var(--blue-dark);
+  background: var(--blue-dark);
+  box-shadow: 0 6px 13px rgb(37 99 200 / 24%);
+}
+
+.order-action:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .orders-empty {
