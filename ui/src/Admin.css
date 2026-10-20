@@ -36,6 +36,32 @@
   letter-spacing: -0.045em;
 }
 
+.orders-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.button--danger {
+  min-height: 36px;
+  padding: 0 12px;
+  border-color: #d64d4d;
+  color: #fff;
+  background: #d64d4d;
+  font-size: 0.78rem;
+}
+
+.button--danger:hover:not(:disabled) {
+  border-color: #b93737;
+  background: #b93737;
+}
+
+.button--danger:disabled {
+  border-color: #e2baba;
+  background: #e2baba;
+  cursor: not-allowed;
+}
+
 .admin-live-indicator,
 .admin-section-caption {
   color: var(--muted);
@@ -514,6 +540,12 @@
   .admin-section-heading h1,
   .admin-section-heading h2 {
     font-size: 1.16rem;
+  }
+
+  .orders-heading-actions {
+    align-items: flex-end;
+    flex-direction: column-reverse;
+    gap: 6px;
   }
 
   .admin-live-indicator,

@@ -131,7 +131,12 @@ router.get('/menus', async (_request, response, next) => {
          m.stock_quantity AS "stockQuantity",
          COALESCE(
            json_agg(
-             json_build_object('id', o.id, 'name', o.name, 'price', o.price)
+             json_build_object(
+               'id', o.id,
+               'name', o.name,
+               'price', o.price,
+               'selectionGroup', o.selection_group
+             )
              ORDER BY o.name
            ) FILTER (WHERE o.id IS NOT NULL),
            '[]'::json
@@ -226,14 +231,12 @@ router.post('/orders', async (request, response, next) => {
     }
 
     const optionIds = [...new Set(items.flatMap((item) => item.optionIds))];
-    const optionResult = optionIds.length
-      ? await client.query(
-          `SELECT id, menu_id, name, price
-           FROM menu_options
-           WHERE id = ANY($1::uuid[])`,
-          [optionIds],
-        )
-      : { rows: [] };
+    const optionResult = await client.query(
+      `SELECT id, menu_id, name, price, selection_group
+       FROM menu_options
+       WHERE menu_id = ANY($1::uuid[])`,
+      [menuIds],
+    );
     const options = new Map(optionResult.rows.map((option) => [option.id, option]));
 
     for (const optionId of optionIds) {
@@ -252,6 +255,26 @@ router.post('/orders', async (request, response, next) => {
         }
         return option;
       });
+      const requiredGroups = new Set(
+        optionResult.rows
+          .filter(
+            (option) =>
+              option.menu_id === menu.id && option.selection_group !== null,
+          )
+          .map((option) => option.selection_group),
+      );
+      for (const group of requiredGroups) {
+        if (
+          selectedOptions.filter((option) => option.selection_group === group)
+            .length !== 1
+        ) {
+          throw new ApiError(
+            400,
+            'INVALID_OPTION_SELECTION',
+            '아메리카노 온도(아이스 또는 핫)를 하나 선택해 주세요.',
+          );
+        }
+      }
       const optionTotal = selectedOptions.reduce(
         (total, option) => total + option.price,
         0,
@@ -370,6 +393,15 @@ router.get('/admin/orders', async (_request, response, next) => {
       ),
     ]);
     response.json({ orders, summary: counts.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete('/admin/orders', async (_request, response, next) => {
+  try {
+    const result = await pool.query('DELETE FROM orders RETURNING id');
+    response.json({ deletedCount: result.rowCount });
   } catch (error) {
     next(error);
   }

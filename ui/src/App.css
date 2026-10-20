@@ -154,6 +154,12 @@
   isolation: isolate;
 }
 
+.menu-card__image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .menu-card__visual--ice {
   background:
     radial-gradient(ellipse at 76% 18%, rgb(255 255 255 / 72%), transparent 24%),
@@ -350,10 +356,27 @@
 
 .option-list {
   display: grid;
-  gap: 1px;
+  gap: 0;
   margin: 0;
   padding: 0;
   border: 0;
+}
+
+.temperature-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px 12px;
+  margin: 9px 0 0;
+  padding: 7px 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.temperature-options__title {
+  padding: 0 0 2px;
+  color: var(--muted);
+  font-size: 0.69rem;
+  font-weight: 700;
 }
 
 .option-row {

@@ -36,6 +36,10 @@ export const api = {
   getMenus: () => request('/api/menus'),
   getAdminMenus: () => request('/api/admin/menus'),
   getAdminOrders: () => request('/api/admin/orders'),
+  deleteAdminOrders: () =>
+    request('/api/admin/orders', {
+      method: 'DELETE',
+    }),
   createOrder: (items) =>
     request('/api/orders', {
       method: 'POST',

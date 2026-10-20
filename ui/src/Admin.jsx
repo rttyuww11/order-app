@@ -41,6 +41,7 @@ function Admin() {
   const [reloadKey, setReloadKey] = useState(0)
   const [busyMenuIds, setBusyMenuIds] = useState([])
   const [busyOrderIds, setBusyOrderIds] = useState([])
+  const [deletingOrders, setDeletingOrders] = useState(false)
   const [notice, setNotice] = useState(null)
   const { data, loading, error } = state
 
@@ -99,7 +100,7 @@ function Admin() {
   }
 
   async function advanceOrder(order) {
-    if (busyOrderIds.includes(order.id)) return
+    if (deletingOrders || busyOrderIds.includes(order.id)) return
     const nextStatus =
       order.status === 'RECEIVED' ? 'PREPARING' : 'COMPLETED'
 
@@ -126,6 +127,38 @@ function Admin() {
       setNotice({ type: 'error', message: updateError.message })
     } finally {
       setBusyOrderIds((ids) => ids.filter((id) => id !== order.id))
+    }
+  }
+
+  async function deleteAllOrders() {
+    if (!data || data.orders.length === 0 || deletingOrders || busyOrderIds.length > 0) {
+      return
+    }
+    if (!window.confirm('주문 현황의 모든 주문을 삭제할까요? 삭제한 주문은 복구할 수 없습니다.')) {
+      return
+    }
+
+    setDeletingOrders(true)
+    setNotice(null)
+
+    try {
+      const result = await api.deleteAdminOrders()
+      setState((current) => ({
+        ...current,
+        data: {
+          ...current.data,
+          orders: [],
+          summary: summarizeOrders([]),
+        },
+      }))
+      setNotice({
+        type: 'success',
+        message: `${result.deletedCount}건의 주문을 삭제했어요.`,
+      })
+    } catch (deleteError) {
+      setNotice({ type: 'error', message: deleteError.message })
+    } finally {
+      setDeletingOrders(false)
     }
   }
 
@@ -279,11 +312,26 @@ function Admin() {
               <p className="eyebrow">ORDER MANAGEMENT</p>
               <h2 id="orders-title">주문 현황</h2>
             </div>
-            {data && (
-              <span className="admin-section-caption">
-                총 {data.orders.length}건
-              </span>
-            )}
+            <div className="orders-heading-actions">
+              {data && (
+                <span className="admin-section-caption">
+                  총 {data.orders.length}건
+                </span>
+              )}
+              <button
+                className="button button--danger"
+                type="button"
+                onClick={deleteAllOrders}
+                disabled={
+                  !data ||
+                  data.orders.length === 0 ||
+                  deletingOrders ||
+                  busyOrderIds.length > 0
+                }
+              >
+                {deletingOrders ? '삭제 중...' : '전체 삭제'}
+              </button>
+            </div>
           </div>
 
           {data && data.orders.length === 0 && (

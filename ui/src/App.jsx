@@ -12,8 +12,10 @@ function getMenuQuantity(items, menuId) {
 }
 
 function getMenuTone(name) {
+  if (name.includes('아메리카노')) return 'ice'
   if (name.includes('ICE')) return 'ice'
   if (name.includes('HOT')) return 'hot'
+  if (name.includes('고구마')) return 'hot'
   return 'latte'
 }
 
@@ -71,16 +73,33 @@ function App() {
     setCart(nextCart)
   }
 
-  function toggleOption(menuId, optionId) {
+  function toggleOption(menu, option) {
     setSelectedOptions((current) => {
-      const menuOptions = current[menuId] ?? []
-      const isSelected = menuOptions.includes(optionId)
+      const menuOptions = current[menu.id] ?? []
+      if (option.selectionGroup) {
+        const groupOptionIds = menu.options
+          .filter(
+            (menuOption) =>
+              menuOption.selectionGroup === option.selectionGroup,
+          )
+          .map((menuOption) => menuOption.id)
+
+        return {
+          ...current,
+          [menu.id]: [
+            ...menuOptions.filter((id) => !groupOptionIds.includes(id)),
+            option.id,
+          ],
+        }
+      }
+
+      const isSelected = menuOptions.includes(option.id)
 
       return {
         ...current,
-        [menuId]: isSelected
-          ? menuOptions.filter((id) => id !== optionId)
-          : [...menuOptions, optionId],
+        [menu.id]: isSelected
+          ? menuOptions.filter((id) => id !== option.id)
+          : [...menuOptions, option.id],
       }
     })
   }
@@ -95,8 +114,32 @@ function App() {
       return
     }
 
+    const selectedMenuOptions = selectedOptions[menu.id] ?? []
+    const selectionGroups = [
+      ...new Set(
+        menu.options
+          .map((option) => option.selectionGroup)
+          .filter(Boolean),
+      ),
+    ]
+    const missingSelection = selectionGroups.find(
+      (group) =>
+        !menu.options.some(
+          (option) =>
+            option.selectionGroup === group &&
+            selectedMenuOptions.includes(option.id),
+        ),
+    )
+    if (missingSelection) {
+      setNotice({
+        type: 'error',
+        message: '아메리카노 온도(아이스 또는 핫)를 선택해 주세요.',
+      })
+      return
+    }
+
     const options = menu.options.filter((option) =>
-      (selectedOptions[menu.id] ?? []).includes(option.id),
+      selectedMenuOptions.includes(option.id),
     )
     const optionKey = options
       .map((option) => option.id)
@@ -268,6 +311,12 @@ function App() {
                 const atStockLimit = cartQuantity >= stockQuantity
                 const soldOut = stockQuantity === 0
                 const tone = getMenuTone(menu.name)
+                const extraOptions = menu.options.filter(
+                  (option) => !option.selectionGroup,
+                )
+                const temperatureOptions = menu.options.filter(
+                  (option) => option.selectionGroup === 'temperature',
+                )
 
                 return (
                   <article className="menu-card" key={menu.id}>
@@ -275,14 +324,24 @@ function App() {
                       className={`menu-card__visual menu-card__visual--${tone}`}
                       aria-hidden="true"
                     >
-                      <span className="visual-sun" />
-                      <span className="visual-beans visual-beans--one" />
-                      <span className="visual-beans visual-beans--two" />
-                      <span className="coffee-cup">
-                        <span className="coffee-cup__lid" />
-                        <span className="coffee-cup__sleeve">COZY</span>
-                      </span>
-                      <span className="visual-caption">COZY COFFEE</span>
+                      {menu.imageUrl ? (
+                        <img
+                          className="menu-card__image"
+                          src={menu.imageUrl}
+                          alt=""
+                        />
+                      ) : (
+                        <>
+                          <span className="visual-sun" />
+                          <span className="visual-beans visual-beans--one" />
+                          <span className="visual-beans visual-beans--two" />
+                          <span className="coffee-cup">
+                            <span className="coffee-cup__lid" />
+                            <span className="coffee-cup__sleeve">COZY</span>
+                          </span>
+                          <span className="visual-caption">COZY COFFEE</span>
+                        </>
+                      )}
                     </div>
 
                     <div className="menu-card__body">
@@ -305,19 +364,20 @@ function App() {
                         <legend className="sr-only">
                           {menu.name} 옵션 선택
                         </legend>
-                        {menu.options.map((option) => {
+                        {extraOptions.map((option) => {
                           const checked = (
                             selectedOptions[menu.id] ?? []
                           ).includes(option.id)
 
                           return (
-                            <label className="option-row" key={option.id}>
+                            <label
+                              className="option-row"
+                              key={option.id}
+                            >
                               <input
                                 type="checkbox"
                                 checked={checked}
-                                onChange={() =>
-                                  toggleOption(menu.id, option.id)
-                                }
+                                onChange={() => toggleOption(menu, option)}
                               />
                               <span>{option.name}</span>
                               <span className="option-price">
@@ -328,6 +388,35 @@ function App() {
                             </label>
                           )
                         })}
+                        {temperatureOptions.length > 0 && (
+                          <fieldset className="temperature-options">
+                            <legend className="temperature-options__title">
+                              온도
+                            </legend>
+                            {temperatureOptions.map((option) => {
+                              const checked = (
+                                selectedOptions[menu.id] ?? []
+                              ).includes(option.id)
+
+                              return (
+                                <label
+                                  className="option-row"
+                                  key={option.id}
+                                >
+                                  <input
+                                    type="radio"
+                                    name={`${menu.id}-temperature`}
+                                    checked={checked}
+                                    onChange={() =>
+                                      toggleOption(menu, option)
+                                    }
+                                  />
+                                  <span>{option.name}</span>
+                                </label>
+                              )
+                            })}
+                          </fieldset>
+                        )}
                       </fieldset>
 
                       <button
