@@ -11,6 +11,17 @@ npm run dev
 
 `.env.example`을 `.env`로 복사해 PostgreSQL 연결 정보를 설정한 뒤 서버를 실행합니다. 서버는 기본적으로 `http://localhost:3000`에서 실행됩니다. `PORT`와 허용할 프런트엔드 출처(`CORS_ORIGIN`)를 설정할 수 있으며, 여러 출처는 쉼표로 구분합니다. Vite 개발 서버는 `/api` 요청을 이 서버로 프록시합니다.
 
+## Render 배포
+
+Render Web Service는 저장소 루트에서 만들고 다음과 같이 설정합니다.
+
+- Root Directory: `server`
+- Build Command: `npm ci`
+- Start Command: `npm start`
+- Health Check Path: `/api/health`
+
+백엔드 시작 파일은 `server/index.js`이며 `npm start`가 이 파일을 실행합니다. 저장소 루트가 작업 디렉터리인 기존 서비스에서 `node server/index.js`를 실행해도 시작할 수 있습니다. PostgreSQL 연결에 필요한 `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`는 Render 서비스의 환경 변수로 등록합니다.
+
 ## 스크립트
 
 ```sh
@@ -32,6 +43,6 @@ npm run check  # JavaScript 구문 검사
 
 초기 메뉴는 아메리카노, 고구마라떼, 카페라떼이며, 세 메뉴 모두 아이스/핫 중 한 가지 온도를 선택할 수 있습니다. 아메리카노 가격은 4,000원, 라떼 메뉴는 각각 5,000원이며, 각 메뉴에 샷·시럽 추가 옵션이 있습니다. 온도 선택은 메뉴 옵션의 선택 그룹으로 한 가지만 고를 수 있습니다.
 
-PostgreSQL 접속 설정은 `.env`의 `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`로 관리합니다. 주문 가격과 재고는 서버에서 검증하며, 주문 생성·재고 차감은 한 트랜잭션으로 처리합니다. 모든 오류는 `{ "error": { "code": "...", "message": "..." } }` 형식입니다.
+PostgreSQL 접속 설정은 `.env`의 `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`로 관리합니다. `DB_HOST`에는 호스트명 또는 PostgreSQL 연결 URL을 지정할 수 있습니다. Render 연결 URL은 TLS를 사용합니다. 기존 `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` 설정도 호환됩니다. 주문 가격과 재고는 서버에서 검증하며, 주문 생성·재고 차감은 한 트랜잭션으로 처리합니다. 모든 오류는 `{ "error": { "code": "...", "message": "..." } }` 형식입니다.
 
 현재 PRD 범위에는 인증이 포함되지 않습니다. 관리자 API는 공개 네트워크에 배포하기 전에 접근 통제를 추가해야 합니다.
