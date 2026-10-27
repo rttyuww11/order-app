@@ -24,6 +24,9 @@ function getDatabaseConfig() {
     database: process.env.DB_NAME ?? process.env.PGDATABASE,
     user: process.env.DB_USER ?? process.env.PGUSER,
     password: process.env.DB_PASSWORD ?? process.env.PGPASSWORD,
+    ...(host?.toLowerCase().endsWith('.render.com')
+      ? { ssl: { rejectUnauthorized: false } }
+      : {}),
   };
 }
 
