@@ -11,18 +11,6 @@ async function request(path, options = {}) {
         ...options.headers,
       },
     })
-    
-async function request(path, options = {}) {
-  let response
-
-  try {
-    response = await fetch(path, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    })
   } catch (error) {
     if (error instanceof TypeError) {
       throw new Error('서버에 연결할 수 없습니다. 서버 상태를 확인해 주세요.')
